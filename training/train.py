@@ -31,11 +31,12 @@ device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 print('device:', device)
 
 # ── Hyperparameters ───────────────────────────────────────────────────────────
+_ROOT           = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
 SCALE_FACTOR    = 2
-HR_DIR          = "data/DIV2K_train_HR"
-LR_DIR          = "data/DIV2K_train_LR_bicubic/X" + str(SCALE_FACTOR)
-HR_VALID_DIR    = "data/DIV2K_valid_HR"
-LR_VALID_DIR    = "data/DIV2K_valid_LR_bicubic/X" + str(SCALE_FACTOR)
+HR_DIR          = os.path.join(_ROOT, "data", "DIV2K_train_HR")
+LR_DIR          = os.path.join(_ROOT, "data", "DIV2K_train_LR_bicubic", "X" + str(SCALE_FACTOR))
+HR_VALID_DIR    = os.path.join(_ROOT, "data", "DIV2K_valid_HR")
+LR_VALID_DIR    = os.path.join(_ROOT, "data", "DIV2K_valid_LR_bicubic", "X" + str(SCALE_FACTOR))
 HR_PATCH        = 128
 IN_CHANNELS     = 3
 MODEL_CHANNELS  = 128
