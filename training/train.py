@@ -19,9 +19,10 @@ import math
 
 from Model.super_res_unet    import SuperResUNet
 from Model.loss              import DataDependentLoss
-from Model.super_res_dataset import build_DIV2K
+from Model.super_res_dataset import build_DIV2K, DIV2KDataset
 from Model.inference         import ConditionalVectorField
 from Model.utils             import plot_comparison, ema
+from torch.utils.data        import DataLoader
 
 # ── Reproducibility ───────────────────────────────────────────────────────────
 SEED = 0
@@ -30,29 +31,31 @@ device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 print('device:', device)
 
 # ── Hyperparameters ───────────────────────────────────────────────────────────
-HR_DIR   = "data/DIV2K_train_HR"
-LR_DIR   = "data/DIV2K_train_LR_bicubic/X" + str(SCALE_FACTOR)
-HR_PATCH = 128
-SCALE_FACTOR     = 2
-IN_CHANNELS      = 3
-MODEL_CHANNELS   = 128
-NUM_RES_BLOCKS   = 2
+SCALE_FACTOR    = 2
+HR_DIR          = "data/DIV2K_train_HR"
+LR_DIR          = "data/DIV2K_train_LR_bicubic/X" + str(SCALE_FACTOR)
+HR_VALID_DIR    = "data/DIV2K_valid_HR"
+LR_VALID_DIR    = "data/DIV2K_valid_LR_bicubic/X" + str(SCALE_FACTOR)
+HR_PATCH        = 128
+IN_CHANNELS     = 3
+MODEL_CHANNELS  = 128
+NUM_RES_BLOCKS  = 2
 CHANNEL_MULT    = (1, 2, 2, 2)
 ATTENTION_RES   = [2, 4]
 DROPOUT         = 0.0
-BATCH_SIZE      = 256
+BATCH_SIZE      = 16
 EPSILON         = 0.05
 NUM_EPOCHS      = 800
 LR              = 1e-4
-LR_END          = 1e-8   # polynomial decay floor (paper: linear decay to 1e-8)
-POLY_POWER      = 1.0    # 1.0 = linear decay (as used in the paper)
+LR_END          = 1e-8
+POLY_POWER      = 1.0
 WARMUP_EPOCHS   = 20
 EMA_DECAY       = 0.9999
 OT_EPS          = 1e-6
 N_ODE_STEPS     = 100
-N_EVAL_IMGS     = 10
-VARIANT         = "cond_sr_x" + str(SCALE_FACTOR)
-RESUME_PATH     = None  # "/home/bdazzini/SuperRes/FM_CIFAR10/runs/2026-05-27/10-19-06_cond_sr_no_val/final_checkpoint.pt"  # set to None to start fresh
+N_EVAL_IMGS     = 8
+VARIANT         = "cond_sr_div2k_x" + str(SCALE_FACTOR)
+RESUME_PATH     = None
 DESCRIPTION     = ""
 
 
@@ -69,7 +72,7 @@ def setup_run_dir(variant: str, config: dict, description: str) -> str:
     return run_dir
 
 # ── Data ──────────────────────────────────────────────────────────────────────
-train_loader, test_loader = build_DIV2K(
+train_loader = build_DIV2K(
     hr_dir=HR_DIR,
     lr_dir=LR_DIR,
     hr_patch_size=HR_PATCH,
@@ -143,10 +146,11 @@ config = dict(
 run_dir = setup_run_dir(VARIANT, config, DESCRIPTION)
 print(f"Run directory: {run_dir}")
 
-# ── Fixed test batch ──────────────────────────────────────────────────────────
-fixed_lr, fixed_hr, _ = next(iter(test_loader))
-fixed_lr = fixed_lr[:N_EVAL_IMGS].to(device)
-fixed_hr = fixed_hr[:N_EVAL_IMGS].to(device)
+# ── Fixed eval batch (seeded → same patches every run) ───────────────────────
+eval_ds  = DIV2KDataset(HR_VALID_DIR, LR_VALID_DIR, hr_patch_size=HR_PATCH, scale=SCALE_FACTOR, seed=0)
+fixed_lr, fixed_hr, _ = next(iter(DataLoader(eval_ds, batch_size=N_EVAL_IMGS, shuffle=False, num_workers=0)))
+fixed_lr = fixed_lr.to(device)
+fixed_hr = fixed_hr.to(device)
 
 #── RESUME ─────────────────────────────────────────────────────────────
 
@@ -224,15 +228,11 @@ plt.close()
 # ── Final sample ──────────────────────────────────────────────────────────────
 ema_model.load_state_dict(torch.load(os.path.join(run_dir, "final_checkpoint.pt"), map_location=device)["final_ema_model"])
 ema_model.eval()
-lr_batch, hr_batch, _ = next(iter(test_loader))
-lr_batch = lr_batch[:N_EVAL_IMGS].to(device)
-hr_batch = hr_batch[:N_EVAL_IMGS].to(device)
-
 with torch.no_grad():
-    x_init = lr_batch + EPSILON * torch.randn_like(lr_batch)
-    vf     = ConditionalVectorField(ema_model, x0_cond=lr_batch, y=None)
+    x_init = fixed_lr + EPSILON * torch.randn_like(fixed_lr)
+    vf     = ConditionalVectorField(ema_model, x0_cond=fixed_lr, y=None)
     t_span = torch.linspace(0, 1, N_ODE_STEPS, device=device)
     traj   = odeint(vf, x_init, t_span, method='euler')
 
-plot_comparison(lr_batch, traj[-1], hr_batch, epoch=NUM_EPOCHS,
+plot_comparison(fixed_lr, traj[-1], fixed_hr, epoch=NUM_EPOCHS,
                 show=False, n_img=N_EVAL_IMGS, save_prefix=f"{VARIANT}_final", output_dir=run_dir)

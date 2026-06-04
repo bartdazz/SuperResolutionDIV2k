@@ -14,10 +14,9 @@ def show_cifar_image(img_tensor):
 
 
 def unnormalize_img(img_tensor):
-    mean = np.array([0.4914, 0.4822, 0.4465])
-    std  = np.array([0.2023, 0.1994, 0.2010])
-    img  = img_tensor.detach().cpu().permute(1, 2, 0).numpy()
-    return np.clip(std * img + mean, 0, 1)
+    # DIV2K is normalised with mean=0.5, std=0.5 → inverse: x*0.5 + 0.5
+    img = img_tensor.detach().cpu().permute(1, 2, 0).numpy()
+    return np.clip(img * 0.5 + 0.5, 0, 1)
 
 
 def plot_comparison(
