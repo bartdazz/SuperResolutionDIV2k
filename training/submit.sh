@@ -10,12 +10,35 @@ DESCRIPTION=${2:-""}
 
 VARIANT=$(python3 -c "
 import ast, sys
+
 src = open('$SCRIPT').read()
-for n in ast.walk(ast.parse(src)):
+tree = ast.parse(src)
+
+# Collect simple constants that VARIANT may reference (e.g. SCALE_FACTOR = 2)
+consts = {}
+for n in ast.walk(tree):
+    if isinstance(n, ast.Assign):
+        for t in n.targets:
+            if isinstance(t, ast.Name):
+                try:
+                    consts[t.id] = ast.literal_eval(n.value)
+                except Exception:
+                    pass
+
+for n in ast.walk(tree):
     if isinstance(n, ast.Assign) and any(
         isinstance(t, ast.Name) and t.id == 'VARIANT' for t in n.targets
     ):
-        print(n.value.value); sys.exit()
+        try:
+            val = eval(
+                compile(ast.Expression(n.value), '<string>', 'eval'),
+                {'__builtins__': None, 'str': str},
+                consts,
+            )
+            print(val); sys.exit()
+        except Exception:
+            pass
+sys.exit(1)
 ")
 
 TIMESTAMP=$(date +%Y-%m-%d_%H-%M-%S)
@@ -27,11 +50,12 @@ mkdir -p "$LOG_DIR"
 LOG_DIR="$(cd "$LOG_DIR" && pwd)"
 
 
-sbatch <<EOF
+sbatch \
+    --output="${LOG_DIR}/slurm_%j.out" \
+    --error="${LOG_DIR}/slurm_%j.err" \
+    <<EOF
 #!/bin/bash -l
 #SBATCH --job-name=${VARIANT}
-#SBATCH --output=${LOG_DIR}/slurm_%j.out
-#SBATCH --error=${LOG_DIR}/slurm_%j.err
 #SBATCH --partition=testing
 #SBATCH --account=thesis
 #SBATCH --ntasks=1
