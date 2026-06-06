@@ -50,12 +50,13 @@ mkdir -p "$LOG_DIR"
 LOG_DIR="$(cd "$LOG_DIR" && pwd)"
 
 
-sbatch \
-    --output="${LOG_DIR}/slurm_%j.out" \
-    --error="${LOG_DIR}/slurm_%j.err" \
-    <<EOF
+TRAIN_DIR="$(pwd)"
+JOBSCRIPT="${LOG_DIR}/job.sh"
+cat > "$JOBSCRIPT" <<EOF
 #!/bin/bash -l
 #SBATCH --job-name=${VARIANT}
+#SBATCH --output=${LOG_DIR}/slurm_%j.out
+#SBATCH --error=${LOG_DIR}/slurm_%j.err
 #SBATCH --partition=testing
 #SBATCH --account=thesis
 #SBATCH --ntasks=1
@@ -79,13 +80,15 @@ echo
 
 export RUN_TIMESTAMP="${TIMESTAMP}"
 export RUN_DESCRIPTION="${DESCRIPTION}"
-cd $(pwd)
+cd ${TRAIN_DIR}
 conda activate gpuenv
 export LD_PRELOAD=/home/bdazzini/.conda/envs/gpuenv/lib/libstdc++.so.6
 /home/bdazzini/.conda/envs/gpuenv/bin/python -u ${SCRIPT}
 echo -n 'Job finished at: '
 TZ="Europe/Rome" date
 EOF
+
+(cd "$LOG_DIR" && sbatch "$JOBSCRIPT")
 
 echo "Submitted ${SCRIPT} (variant=${VARIANT}, timestamp=${TIMESTAMP})"
 echo "  Artifacts → runs/${DATE_PART}/${TIME_PART}_${VARIANT}/"
