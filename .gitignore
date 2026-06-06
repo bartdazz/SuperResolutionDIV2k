@@ -1,7 +1,14 @@
-runs/
+runs/*
+!runs/ImgGen/
+!runs/ImgGen/imgGen.ipynb
+!runs/ImgGen/ImgGen.py
+!runs/ImgGen/gen.slurm
 slurm_logs/
 data/
 __pycache__/
 *.pth
 *.pyc
+*.png
+*.out
+*.err
 .DS_Store

@@ -32,7 +32,7 @@ print('device:', device)
 
 # ── Hyperparameters ───────────────────────────────────────────────────────────
 _ROOT           = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
-SCALE_FACTOR    = 2
+SCALE_FACTOR    = 4
 HR_DIR          = os.path.join(_ROOT, "data", "DIV2K_train_HR")
 LR_DIR          = os.path.join(_ROOT, "data", "DIV2K_train_LR_bicubic", "X" + str(SCALE_FACTOR))
 HR_VALID_DIR    = os.path.join(_ROOT, "data", "DIV2K_valid_HR")
@@ -40,17 +40,16 @@ LR_VALID_DIR    = os.path.join(_ROOT, "data", "DIV2K_valid_LR_bicubic", "X" + st
 HR_PATCH        = 128
 IN_CHANNELS     = 3
 MODEL_CHANNELS  = 128
-NUM_RES_BLOCKS  = 2
-CHANNEL_MULT    = (1, 2, 2, 2)
-ATTENTION_RES   = [2, 4]
+NUM_RES_BLOCKS  = 3
+CHANNEL_MULT    = (1, 2, 2, 4, 4)
+ATTENTION_RES   = [4, 8]
 DROPOUT         = 0.0
-BATCH_SIZE      = 16
+BATCH_SIZE      = 32
 EPSILON         = 0.05
-NUM_EPOCHS      = 800
+NUM_EPOCHS      = 1200
 LR              = 1e-4
-LR_END          = 1e-8
-POLY_POWER      = 1.0
-WARMUP_EPOCHS   = 20
+LR_END          = 1e-5
+WARMUP_EPOCHS   = 15
 EMA_DECAY       = 0.9999
 OT_EPS          = 1e-6
 N_ODE_STEPS     = 100
@@ -111,20 +110,20 @@ warmup_steps = WARMUP_EPOCHS * steps_per_epoch
 # everything as a fraction of LR.
 _lr_ratio = LR_END / LR   # fraction of peak lr at the floor
 
-def poly_warmup_lr(step):
+def cosine_warmup_lr(step):
     if warmup_steps > 0 and step < warmup_steps:
-        # linear ramp: LR_END/LR → 1.0
         return _lr_ratio + (step / warmup_steps) * (1.0 - _lr_ratio)
     decay_steps = max(total_steps - warmup_steps, 1)
     progress    = (step - warmup_steps) / decay_steps
     progress    = min(progress, 1.0)
-    # polynomial decay: 1.0 → LR_END/LR
-    return (1.0 - _lr_ratio) * (1.0 - progress) ** POLY_POWER + _lr_ratio
+    # cosine decay from 1.0 → _lr_ratio
+    cosine      = 0.5 * (1.0 + math.cos(math.pi * progress))
+    return _lr_ratio + (1.0 - _lr_ratio) * cosine
 
 # optimization
 loss_fn   = DataDependentLoss(epsilon=EPSILON)
 optimizer = torch.optim.Adam(model.parameters(), lr=LR)
-sched     = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=poly_warmup_lr)
+sched     = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=cosine_warmup_lr)
 
 # show model size
 model_size = 0
@@ -139,7 +138,7 @@ config = dict(
     model_channels=MODEL_CHANNELS, num_res_blocks=NUM_RES_BLOCKS,
     channel_mult=list(CHANNEL_MULT), attention_res=ATTENTION_RES,
     dropout=DROPOUT, batch_size=BATCH_SIZE, epsilon=EPSILON,
-    num_epochs=NUM_EPOCHS, lr=LR, lr_end=LR_END, poly_power=POLY_POWER,
+    num_epochs=NUM_EPOCHS, lr=LR, lr_end=LR_END,
     warmup_epochs=WARMUP_EPOCHS,
     ema_decay=EMA_DECAY, ot_eps=OT_EPS, n_ode_steps=N_ODE_STEPS,
     condition_on_lr=model.condition_on_lr, num_classes=model.num_classes,
