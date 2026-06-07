@@ -13,7 +13,7 @@ from Model.super_res_unet    import SuperResUNet
 from Model.loss              import DataDependentLoss
 from Model.super_res_dataset import build_DIV2K, DIV2KDataset
 from Model.inference         import ConditionalVectorField
-from Model.utils             import plot_comparison
+from Model.utils             import plot_comparison, plot_comparison_zoom
 from torch.utils.data        import DataLoader
 
 
@@ -91,8 +91,15 @@ with torch.no_grad():
     t_span = torch.linspace(0, 1, N_ODE_STEPS, device=device)
     traj   = odeint(vf, x_init, t_span, method='euler') # 'euler' / 'heun'
 
-plot_comparison(lr_batch, traj[-1], hr_batch, epoch=13,
-                show=False, n_img=N_EVAL_IMGS, save_prefix=f"{VARIANT}_final", output_dir=run_dir)
+plot_comparison_zoom(
+    lr_batch, traj[-1], epoch=13,
+    high_r=hr_batch,        # set to None if you have no HR reference
+    zoom_box=None,          # None = auto-select highest-variance region per image
+    crop_frac=0.25,         # zoom crop = 25% of image size
+    zoom_scale=2,           # magnify the crop 2× for display
+    show=False, n_img=N_EVAL_IMGS,
+    save_prefix=f"{VARIANT}_final", output_dir=run_dir,
+)
 
 # %%
 
