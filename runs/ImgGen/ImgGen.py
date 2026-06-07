@@ -28,8 +28,10 @@ _ROOT           = os.path.abspath(os.path.join(os.path.dirname(__file__), '../..
 SCALE_FACTOR    = 4
 HR_DIR          = os.path.join(_ROOT, "data", "DIV2K_train_HR")
 LR_DIR          = os.path.join(_ROOT, "data", "DIV2K_train_LR_bicubic", "X" + str(SCALE_FACTOR))
-HR_VALID_DIR    = os.path.join(_ROOT, "data", "DIV2K_valid_HR")
-LR_VALID_DIR    = os.path.join(_ROOT, "data", "DIV2K_valid_LR_bicubic", "X" + str(SCALE_FACTOR))
+# HR_VALID_DIR    = os.path.join(_ROOT, "data", "DIV2K_valid_HR")
+# LR_VALID_DIR    = os.path.join(_ROOT, "data", "DIV2K_valid_LR_bicubic", "X" + str(SCALE_FACTOR))
+HR_VALID_DIR    = os.path.join(_ROOT, "data", "extra")
+LR_VALID_DIR    = os.path.join(_ROOT, "data", "extra")
 HR_PATCH        = 512
 IN_CHANNELS     = 3
 MODEL_CHANNELS  = 128
@@ -70,17 +72,18 @@ model = SuperResUNet(
 ).to(device)
 
 # %%
-pth_path = os.path.join(os.path.dirname(__file__), "../2026-06-05/16-41-56_cond_sr_div2k_x4/checkpoint_epoch_800.pt")
-state_dict = torch.load(pth_path, map_location=device)['final_ema_model']
+pth_path = os.path.join(os.path.dirname(__file__), "../2026-06-05/16-41-56_cond_sr_div2k_x4/final_checkpoint.pt")
+state_dict = torch.load(pth_path, map_location=device)['final_model']
 model.load_state_dict(state_dict)
 
 model.eval()
 
 # %%
-N_ODE_STEPS = 10
+N_ODE_STEPS = 100
 
-lr_batch = fixed_lr[0:N_EVAL_IMGS].to(device)
-hr_batch = fixed_hr[0:N_EVAL_IMGS].to(device)
+lr_batch = fixed_lr[:N_EVAL_IMGS].to(device)
+hr_batch = fixed_hr[:N_EVAL_IMGS].to(device)
+
 
 with torch.no_grad():
     x_init = lr_batch + EPSILON * torch.randn_like(lr_batch)
@@ -88,7 +91,7 @@ with torch.no_grad():
     t_span = torch.linspace(0, 1, N_ODE_STEPS, device=device)
     traj   = odeint(vf, x_init, t_span, method='euler') # 'euler' / 'heun'
 
-plot_comparison(lr_batch, traj[-1], hr_batch, epoch=513,
+plot_comparison(lr_batch, traj[-1], hr_batch, epoch=13,
                 show=False, n_img=N_EVAL_IMGS, save_prefix=f"{VARIANT}_final", output_dir=run_dir)
 
 # %%

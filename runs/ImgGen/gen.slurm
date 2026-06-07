@@ -1,13 +1,13 @@
 #!/bin/bash -l
 #SBATCH --job-name=imgGen
-#SBATCH --output=imgGen.out
-#SBATCH --error=imgGen.err
+#SBATCH --output=ImgGen.out
+#SBATCH --error=ImgGen.err
 #SBATCH --partition=testing
 #SBATCH --account=thesis
 #SBATCH --ntasks=1
 #SBATCH --gres=gpu:1
 #SBATCH --cpus-per-task=4
-#SBATCH --mem=16G
+#SBATCH --mem=32G
 #SBATCH --time=1-00:00:00
 #SBATCH --exclude=vgpu11
 

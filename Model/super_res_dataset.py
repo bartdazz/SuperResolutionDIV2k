@@ -49,8 +49,10 @@ class DIV2KDataset(Dataset):
         # use a per-index RNG when seed is set, otherwise use the global random state
         rng = random.Random(self.seed + idx) if self.seed is not None else random
 
-        x = rng.randint(0, lw - lp)
-        y = rng.randint(0, lh - lp)
+        #x = rng.randint(0, lw - lp)
+        #y = rng.randint(0, lh - lp)
+        x = lw // 2 
+        y = lh // 2
 
         lr_patch = lr.crop((x, y, x + lp, y + lp))
         hr_patch = hr.crop((x * self.scale, y * self.scale,

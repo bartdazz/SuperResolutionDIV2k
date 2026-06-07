@@ -29,8 +29,8 @@ NUM_RES_BLOCKS = 3
 CHANNEL_MULT  = (1, 2, 2, 4, 4)
 ATTENTION_RES = [4, 8]
 EPSILON       = 0.05
-N_EVAL_IMGS   = 8
-N_ODE_STEPS   = 25
+N_EVAL_IMGS   = 1
+N_ODE_STEPS   = 100
 CHECKPOINT    = os.path.join(
     os.path.dirname(__file__),
     "../2026-06-05/16-41-56_cond_sr_div2k_x4/final_checkpoint.pt"
@@ -107,7 +107,7 @@ model = SuperResUNet(
     num_classes           = None,
 ).to(device)
 
-state_dict = torch.load(CHECKPOINT, map_location=device)['final_ema_model']
+state_dict = torch.load(CHECKPOINT, map_location=device)['final_model']
 model.load_state_dict(state_dict)
 model.eval()
 
@@ -116,7 +116,7 @@ print(f"Disabled attention at ds={DISABLE_DS}: {n_patched} block(s) patched")
 
 # ── Data ──────────────────────────────────────────────────────────────────────
 eval_ds = DIV2KDataset(HR_VALID_DIR, LR_VALID_DIR, hr_patch_size=HR_PATCH,
-                       scale=SCALE_FACTOR, seed=SEED)
+                       scale=SCALE_FACTOR, seed=68)
 lr_batch, hr_batch, _ = next(iter(
     DataLoader(eval_ds, batch_size=N_EVAL_IMGS, shuffle=False, num_workers=0)
 ))
