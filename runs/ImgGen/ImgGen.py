@@ -29,8 +29,12 @@ N_ODE_STEPS  = 25
 # The model will receive this patch bicubic-upsampled to LR_CROP_SIZE * SCALE_FACTOR.
 LR_CROP_SIZE = 128
 
-# (r0, c0) top-left corner of the crop in LR pixels, or None for auto-select.
-CROP_ORIGIN  = None
+# Crop origins (r0, c0) in LR pixels, or None for auto-select.
+# Two crops are shown with different border colours.
+CROP_ORIGIN_1 = None          # first crop  — auto = highest variance region
+CROP_ORIGIN_2 = None          # second crop — auto = highest variance non-overlapping
+CROP_COLOR_1  = 'red'
+CROP_COLOR_2  = 'blue'
 
 # Folder containing the LR images you want to super-resolve.
 _ROOT      = os.path.abspath(os.path.join(os.path.dirname(__file__), '../..'))
@@ -86,52 +90,61 @@ print(f"Found {len(paths)} image(s) in {IMAGE_DIR}")
 # ── Per-image inference ───────────────────────────────────────────────────────
 out_dir = os.path.dirname(__file__)
 
-for img_path in paths:
-    name     = os.path.splitext(os.path.basename(img_path))[0]
-    full_lr  = load_image(img_path).to(device)   # (3, H, W)
-    _, H, W  = full_lr.shape
-
-    # Guard: image must be large enough for the requested crop
-    if H < LR_CROP_SIZE or W < LR_CROP_SIZE:
-        print(f"  Skipping {name}: image ({H}×{W}) smaller than LR_CROP_SIZE={LR_CROP_SIZE}")
-        continue
-
-    # Select crop origin
-    if CROP_ORIGIN is None:
-        r0, c0 = _auto_zoom_box(full_lr, LR_CROP_SIZE)
-    else:
-        r0, c0 = CROP_ORIGIN
-
-    r0 = min(r0, H - LR_CROP_SIZE)
-    c0 = min(c0, W - LR_CROP_SIZE)
-    crop_box = (r0, c0, LR_CROP_SIZE, LR_CROP_SIZE)
-
-    # Extract LR crop and bicubic-upsample to model input size
-    lr_crop = full_lr[:, r0:r0 + LR_CROP_SIZE, c0:c0 + LR_CROP_SIZE]  # (3,ch,cw)
+def sr_patch(full_lr, r0, c0):
+    """Extract LR crop at (r0, c0), upsample, run SR. Returns (lr_crop, sr_crop)."""
+    r0 = min(r0, full_lr.shape[1] - LR_CROP_SIZE)
+    c0 = min(c0, full_lr.shape[2] - LR_CROP_SIZE)
+    lr_crop = full_lr[:, r0:r0 + LR_CROP_SIZE, c0:c0 + LR_CROP_SIZE]
     hr_size = LR_CROP_SIZE * SCALE_FACTOR
     lr_up   = F.interpolate(
         lr_crop.unsqueeze(0), size=(hr_size, hr_size),
         mode='bicubic', align_corners=False,
-    )                                                                    # (1,3,hs,hs)
-
-    # Super-resolve the patch
+    )
     with torch.no_grad():
         x_init = lr_up + EPSILON * torch.randn_like(lr_up)
         vf     = ConditionalVectorField(model, x0_cond=lr_up, y=None)
         t_span = torch.linspace(0, 1, N_ODE_STEPS, device=device)
         traj   = odeint(vf, x_init, t_span, method='euler')
-    sr_crop = traj[-1].squeeze(0).clamp(-1, 1)                         # (3,hs,hs)
+    sr = traj[-1].squeeze(0).clamp(-1, 1)
+    return lr_crop, sr, r0, c0
 
-    # Plot
+
+for img_path in paths:
+    name    = os.path.splitext(os.path.basename(img_path))[0]
+    full_lr = load_image(img_path).to(device)
+    _, H, W = full_lr.shape
+
+    if H < LR_CROP_SIZE or W < LR_CROP_SIZE:
+        print(f"  Skipping {name}: image ({H}×{W}) smaller than LR_CROP_SIZE={LR_CROP_SIZE}")
+        continue
+
+    # ── Crop 1 ────────────────────────────────────────────────────────────
+    if CROP_ORIGIN_1 is None:
+        r1, c1 = _auto_zoom_box(full_lr, LR_CROP_SIZE)
+    else:
+        r1, c1 = CROP_ORIGIN_1
+    lr_crop1, sr_crop1, r1, c1 = sr_patch(full_lr, r1, c1)
+    box1 = (r1, c1, LR_CROP_SIZE, LR_CROP_SIZE)
+
+    # ── Crop 2 (non-overlapping with crop 1) ──────────────────────────────
+    if CROP_ORIGIN_2 is None:
+        r2, c2 = _auto_zoom_box(full_lr, LR_CROP_SIZE, avoid=box1)
+    else:
+        r2, c2 = CROP_ORIGIN_2
+    lr_crop2, sr_crop2, r2, c2 = sr_patch(full_lr, r2, c2)
+    box2 = (r2, c2, LR_CROP_SIZE, LR_CROP_SIZE)
+
+    # ── Plot ──────────────────────────────────────────────────────────────
     plot_sr_patch(
-        full_lr   = full_lr.cpu(),
-        lr_crop   = lr_crop.cpu(),
-        sr_crop   = sr_crop.cpu(),
-        crop_box_lr = crop_box,
+        full_lr  = full_lr.cpu(),
+        patches  = [
+            (lr_crop1.cpu(), sr_crop1.cpu(), box1, CROP_COLOR_1),
+            (lr_crop2.cpu(), sr_crop2.cpu(), box2, CROP_COLOR_2),
+        ],
         scale_factor = SCALE_FACTOR,
-        box_color = 'red',
-        show      = False,
-        save_prefix = name,
-        output_dir  = out_dir,
+        show         = False,
+        save_prefix  = name,
+        output_dir   = out_dir,
     )
-    print(f"  Saved: {out_dir}/{name}_sr_patch.png  (crop at r={r0}, c={c0})")
+    print(f"  Saved: {out_dir}/{name}_sr_patch.png")
+    print(f"    crop1 ({CROP_COLOR_1}): r={r1}, c={c1}  |  crop2 ({CROP_COLOR_2}): r={r2}, c={c2}")
