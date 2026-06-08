@@ -141,7 +141,7 @@ def plot_sr_patch(
         # Zoom panel
         ax_z = fig.add_subplot(gs[row, 1])
         ax_z.imshow(lr_img, interpolation='nearest')
-        ax_z.axis('off')
+        ax_z.set_xticks([]); ax_z.set_yticks([])
         for sp in ax_z.spines.values():
             sp.set_edgecolor(color); sp.set_linewidth(3); sp.set_visible(True)
         if row == 0:
@@ -150,7 +150,7 @@ def plot_sr_patch(
         # SR panel
         ax_s = fig.add_subplot(gs[row, 2])
         ax_s.imshow(sr_img, interpolation='nearest')
-        ax_s.axis('off')
+        ax_s.set_xticks([]); ax_s.set_yticks([])
         for sp in ax_s.spines.values():
             sp.set_edgecolor(color); sp.set_linewidth(3); sp.set_visible(True)
         if row == 0:
