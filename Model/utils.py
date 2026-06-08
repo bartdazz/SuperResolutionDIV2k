@@ -79,57 +79,63 @@ def plot_sr_patch(
     """Three-panel SR result plot (no HR reference needed).
 
     Layout:
-        [Full original LR + rectangle]  |  [LR Crop]  |  [SR ×s]
+        [Full original LR + rectangle]  |  [ LR Crop ]
+                                           [ SR ×s    ]
 
-    Args:
-        full_lr:     full original LR image tensor (3, H, W)
-        lr_crop:     the LR patch at native resolution (3, ch, cw)
-        sr_crop:     the SR output (3, ch*s, cw*s)
-        crop_box_lr: (r0, c0, ch, cw) — crop location in full_lr coordinates
-        scale_factor: upscaling factor, used for the SR panel title
+    The original image sits on the left (slightly smaller than the crop
+    column). The LR crop and SR output are stacked vertically on the right,
+    both framed with a red border that matches the rectangle on the left.
     """
-    r0, c0, ch, cw = crop_box_lr
+    from matplotlib.gridspec import GridSpec
 
+    r0, c0, ch, cw = crop_box_lr
     full_img = unnormalize_img(full_lr)    # (H, W, 3)
     lr_img   = unnormalize_img(lr_crop)    # (ch, cw, 3)
     sr_img   = unnormalize_img(sr_crop)    # (ch*s, cw*s, 3)
     H, W     = full_img.shape[:2]
 
-    # Width ratio: full image vs each crop panel
-    full_ratio = W / cw
-    fig_w      = (full_ratio + 2) * 3.0
-    fig_h      = (H / W) * full_ratio * 3.0
+    # ── Figure sizing ─────────────────────────────────────────────────────
+    # Right column width in inches; left column is slightly narrower.
+    w_crop  = 3.0
+    w_full  = w_crop * 1.3                 # original image a bit smaller
+    h_fig   = (H / W) * w_full            # height follows the image aspect ratio
 
-    fig, (ax_full, ax_lr, ax_sr) = plt.subplots(
-        1, 3,
-        figsize=(fig_w, fig_h),
-        gridspec_kw={'width_ratios': [full_ratio, 1, 1], 'wspace': 0.05},
+    fig = plt.figure(figsize=(w_full + w_crop + 0.2, h_fig))
+    gs  = GridSpec(
+        2, 2, figure=fig,
+        width_ratios  = [w_full, w_crop],
+        height_ratios = [1, 1],
+        wspace=0.06, hspace=0.08,
     )
 
-    # ── Full original image with rectangle ────────────────────────────────
+    ax_full = fig.add_subplot(gs[:, 0])   # left: spans both rows
+    ax_lr   = fig.add_subplot(gs[0, 1])   # right top: LR crop
+    ax_sr   = fig.add_subplot(gs[1, 1])   # right bottom: SR output
+
+    # ── Left: full original image ─────────────────────────────────────────
     ax_full.imshow(full_img, interpolation='nearest')
     ax_full.add_patch(plt.Rectangle(
         (c0, r0), cw, ch,
         linewidth=max(1, int(W / 300)), edgecolor=box_color, facecolor='none',
     ))
     ax_full.axis('off')
-    ax_full.set_title('Original', fontsize=12, fontweight='bold', pad=5)
+    ax_full.set_title('Original', fontsize=11, fontweight='bold', pad=4)
 
-    # ── LR crop (raw pixels) ──────────────────────────────────────────────
+    # ── Right top: LR crop ────────────────────────────────────────────────
     ax_lr.imshow(lr_img, interpolation='nearest')
     ax_lr.axis('off')
     for spine in ax_lr.spines.values():
         spine.set_edgecolor(box_color); spine.set_linewidth(2); spine.set_visible(True)
-    ax_lr.set_title('LR Crop', fontsize=12, fontweight='bold', pad=5)
+    ax_lr.set_title('LR Crop', fontsize=11, fontweight='bold', pad=4)
 
-    # ── SR output ─────────────────────────────────────────────────────────
+    # ── Right bottom: SR output ───────────────────────────────────────────
     ax_sr.imshow(sr_img, interpolation='nearest')
     ax_sr.axis('off')
     for spine in ax_sr.spines.values():
         spine.set_edgecolor(box_color); spine.set_linewidth(2); spine.set_visible(True)
-    ax_sr.set_title(f'SR ×{scale_factor}', fontsize=12, fontweight='bold', pad=5)
+    ax_sr.set_title(f'SR ×{scale_factor}', fontsize=11, fontweight='bold', pad=4)
 
-    fig.suptitle(save_prefix, fontsize=13, fontweight='bold', y=1.02)
+    fig.suptitle(save_prefix, fontsize=12, fontweight='bold', y=1.02)
     fig.savefig(
         os.path.join(output_dir, f"{save_prefix}_sr_patch.png"),
         bbox_inches='tight', dpi=200,
