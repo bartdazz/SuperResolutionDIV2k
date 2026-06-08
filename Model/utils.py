@@ -78,64 +78,77 @@ def plot_sr_patch(
 ):
     """Three-panel SR result plot (no HR reference needed).
 
-    Layout:
-        [Full original LR + rectangle]  |  [ LR Crop ]
-                                           [ SR ×s    ]
+    Layout — all panels the same height, side by side:
+        [ Original + rectangle ]  [ Zoom ]  [ SR ]
 
-    The original image sits on the left (slightly smaller than the crop
-    column). The LR crop and SR output are stacked vertically on the right,
-    both framed with a red border that matches the rectangle on the left.
+    Labels sit below each panel. Zoom and SR have a coloured border that
+    matches the rectangle drawn on the original image.
     """
-    from matplotlib.gridspec import GridSpec
-
     r0, c0, ch, cw = crop_box_lr
-    full_img = unnormalize_img(full_lr)    # (H, W, 3)
-    lr_img   = unnormalize_img(lr_crop)    # (ch, cw, 3)
-    sr_img   = unnormalize_img(sr_crop)    # (ch*s, cw*s, 3)
+    full_img = unnormalize_img(full_lr)
+    lr_img   = unnormalize_img(lr_crop)
+    sr_img   = unnormalize_img(sr_crop)
     H, W     = full_img.shape[:2]
 
     # ── Figure sizing ─────────────────────────────────────────────────────
-    # Right column width in inches; left column is slightly narrower.
-    w_crop  = 3.0
-    w_full  = w_crop * 1.3                 # original image a bit smaller
-    h_fig   = (H / W) * w_full            # height follows the image aspect ratio
+    # Fix figure height; derive widths from each panel's natural aspect ratio.
+    h_fig    = 4.0                          # inches
+    w_full   = (W / H) * h_fig * 0.75      # original image: 75% of natural width
+    w_crop   = (cw / ch) * h_fig * 0.85    # crop panels: 85% of crop aspect
+    label_h  = 0.35                         # inches below each panel for label
+    fig_h    = h_fig + label_h + 0.4        # +0.4 for suptitle
 
-    fig = plt.figure(figsize=(w_full + w_crop + 0.2, h_fig))
-    gs  = GridSpec(
-        2, 2, figure=fig,
-        width_ratios  = [w_full, w_crop],
-        height_ratios = [1, 1],
-        wspace=0.06, hspace=0.08,
-    )
+    fig = plt.figure(figsize=(w_full + 2 * w_crop + 0.3, fig_h))
 
-    ax_full = fig.add_subplot(gs[:, 0])   # left: spans both rows
-    ax_lr   = fig.add_subplot(gs[0, 1])   # right top: LR crop
-    ax_sr   = fig.add_subplot(gs[1, 1])   # right bottom: SR output
+    # Manual axes: place them so their tops align and heights are equal
+    top    = 1.0 - (0.4 / fig_h)           # normalised y of panel top
+    height = h_fig / fig_h                  # normalised panel height
+    gap    = 0.02                           # normalised gap between panels
+    total_w = w_full + 2 * w_crop + 0.3
+    x0      = 0.01
+    wn_full = w_full  / total_w
+    wn_crop = w_crop  / total_w
 
-    # ── Left: full original image ─────────────────────────────────────────
-    ax_full.imshow(full_img, interpolation='nearest')
+    ax_full = fig.add_axes([x0,
+                            top - height,
+                            wn_full - gap,
+                            height])
+    ax_zoom = fig.add_axes([x0 + wn_full + gap,
+                            top - height,
+                            wn_crop - gap,
+                            height])
+    ax_sr   = fig.add_axes([x0 + wn_full + wn_crop + 2 * gap,
+                            top - height,
+                            wn_crop - gap,
+                            height])
+
+    # ── Original image ────────────────────────────────────────────────────
+    ax_full.imshow(full_img, interpolation='nearest', aspect='auto')
     ax_full.add_patch(plt.Rectangle(
         (c0, r0), cw, ch,
-        linewidth=max(1, int(W / 300)), edgecolor=box_color, facecolor='none',
+        linewidth=max(2, int(W / 200)), edgecolor=box_color, facecolor='none',
     ))
     ax_full.axis('off')
-    ax_full.set_title('Original', fontsize=11, fontweight='bold', pad=4)
+    ax_full.text(0.5, -0.03, 'Original', transform=ax_full.transAxes,
+                 ha='center', va='top', fontsize=11, fontweight='bold')
 
-    # ── Right top: LR crop ────────────────────────────────────────────────
-    ax_lr.imshow(lr_img, interpolation='nearest')
-    ax_lr.axis('off')
-    for spine in ax_lr.spines.values():
-        spine.set_edgecolor(box_color); spine.set_linewidth(2); spine.set_visible(True)
-    ax_lr.set_title('LR Crop', fontsize=11, fontweight='bold', pad=4)
+    # ── Zoom (LR crop) ────────────────────────────────────────────────────
+    ax_zoom.imshow(lr_img, interpolation='nearest', aspect='auto')
+    ax_zoom.axis('off')
+    for spine in ax_zoom.spines.values():
+        spine.set_edgecolor(box_color); spine.set_linewidth(3); spine.set_visible(True)
+    ax_zoom.text(0.5, -0.03, 'Zoom', transform=ax_zoom.transAxes,
+                 ha='center', va='top', fontsize=11, fontweight='bold')
 
-    # ── Right bottom: SR output ───────────────────────────────────────────
-    ax_sr.imshow(sr_img, interpolation='nearest')
+    # ── SR output ─────────────────────────────────────────────────────────
+    ax_sr.imshow(sr_img, interpolation='nearest', aspect='auto')
     ax_sr.axis('off')
     for spine in ax_sr.spines.values():
-        spine.set_edgecolor(box_color); spine.set_linewidth(2); spine.set_visible(True)
-    ax_sr.set_title(f'SR ×{scale_factor}', fontsize=11, fontweight='bold', pad=4)
+        spine.set_edgecolor(box_color); spine.set_linewidth(3); spine.set_visible(True)
+    ax_sr.text(0.5, -0.03, 'SR', transform=ax_sr.transAxes,
+               ha='center', va='top', fontsize=11, fontweight='bold')
 
-    fig.suptitle(save_prefix, fontsize=12, fontweight='bold', y=1.02)
+    fig.suptitle(save_prefix, fontsize=13, fontweight='bold', y=0.98)
     fig.savefig(
         os.path.join(output_dir, f"{save_prefix}_sr_patch.png"),
         bbox_inches='tight', dpi=200,
