@@ -1,107 +1,137 @@
 # %%
 import sys
 import os
-import json
-from datetime import datetime
+import glob
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../..')))
 
 import torch
-import matplotlib.pyplot as plt
+import torch.nn.functional as F
+from PIL import Image
+from torchvision.transforms import ToTensor
 from torchdiffeq import odeint
 
-from Model.super_res_unet    import SuperResUNet
-from Model.loss              import DataDependentLoss
-from Model.super_res_dataset import build_DIV2K, DIV2KDataset
-from Model.inference         import ConditionalVectorField
-from Model.utils             import plot_comparison, plot_comparison_zoom
-from torch.utils.data        import DataLoader
+from Model.super_res_unet import SuperResUNet
+from Model.inference      import ConditionalVectorField
+from Model.utils          import plot_sr_patch, _auto_zoom_box
 
-
-# ── Reproducibility ───────────────────────────────────────────────────────────
-SEED = 0
-torch.manual_seed(SEED)
-device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-print('device:', device)
-
-# ── Hyperparameters ───────────────────────────────────────────────────────────
-_ROOT           = os.path.abspath(os.path.join(os.path.dirname(__file__), '../..'))
-SCALE_FACTOR    = 4
-HR_DIR          = os.path.join(_ROOT, "data", "DIV2K_train_HR")
-LR_DIR          = os.path.join(_ROOT, "data", "DIV2K_train_LR_bicubic", "X" + str(SCALE_FACTOR))
-# HR_VALID_DIR    = os.path.join(_ROOT, "data", "DIV2K_valid_HR")
-# LR_VALID_DIR    = os.path.join(_ROOT, "data", "DIV2K_valid_LR_bicubic", "X" + str(SCALE_FACTOR))
-HR_VALID_DIR    = os.path.join(_ROOT, "data", "extra")
-LR_VALID_DIR    = os.path.join(_ROOT, "data", "extra")
-HR_PATCH        = 512
-IN_CHANNELS     = 3
+# ── Config ────────────────────────────────────────────────────────────────────
+SEED         = 0
+SCALE_FACTOR = 4
+IN_CHANNELS  = 3
 MODEL_CHANNELS  = 128
 NUM_RES_BLOCKS  = 3
 CHANNEL_MULT    = (1, 2, 2, 4, 4)
 ATTENTION_RES   = [4, 8]
-BATCH_SIZE      = 32
-EPSILON         = 0.05
-NUM_EPOCHS      = 100
-LR              = 3e-4
-OT_EPS          = 1e-6
-N_EVAL_IMGS     = 1
-VARIANT = "imgen_sr_div2k_x" + str(SCALE_FACTOR)
-run_dir = '.'
+EPSILON      = 0.05
+N_ODE_STEPS  = 25
 
-# %%
-eval_ds  = DIV2KDataset(HR_VALID_DIR, LR_VALID_DIR, hr_patch_size=HR_PATCH, scale=SCALE_FACTOR, seed=0)
-fixed_lr, fixed_hr, _ = next(iter(DataLoader(eval_ds, batch_size=N_EVAL_IMGS, shuffle=False, num_workers=0)))
-fixed_lr = fixed_lr.to(device)
-fixed_hr = fixed_hr.to(device)
+# Size of the patch to super-resolve, in LR image pixels.
+# The model will receive this patch bicubic-upsampled to LR_CROP_SIZE * SCALE_FACTOR.
+LR_CROP_SIZE = 128
 
+# (r0, c0) top-left corner of the crop in LR pixels, or None for auto-select.
+CROP_ORIGIN  = None
 
-# %%
-model = SuperResUNet(
-    in_channels          = IN_CHANNELS,
-    condition_on_lr      = True,          # x0 concatenated with x_t → 6 input channels
-    model_channels       = MODEL_CHANNELS,
-    out_channels         = IN_CHANNELS,
-    num_res_blocks       = NUM_RES_BLOCKS,
-    attention_resolutions = ATTENTION_RES,
-    dropout              = 0.1,
-    channel_mult         = CHANNEL_MULT,
-    conv_resample        = True,
-    num_heads            = 4,
-    num_heads_upsample   = -1,
-    use_scale_shift_norm = True,
-    num_classes          = None,          # no class conditioning
-).to(device)
+# Folder containing the LR images you want to super-resolve.
+_ROOT      = os.path.abspath(os.path.join(os.path.dirname(__file__), '../..'))
+IMAGE_DIR  = os.path.join(_ROOT, "data", "extra")
 
-# %%
-pth_path = os.path.join(os.path.dirname(__file__), "../2026-06-05/16-41-56_cond_sr_div2k_x4/final_checkpoint.pt")
-state_dict = torch.load(pth_path, map_location=device)['final_model']
-model.load_state_dict(state_dict)
-
-model.eval()
-
-# %%
-N_ODE_STEPS = 100
-
-lr_batch = fixed_lr[:N_EVAL_IMGS].to(device)
-hr_batch = fixed_hr[:N_EVAL_IMGS].to(device)
-
-
-with torch.no_grad():
-    x_init = lr_batch + EPSILON * torch.randn_like(lr_batch)
-    vf     = ConditionalVectorField(model, x0_cond=lr_batch, y=None)
-    t_span = torch.linspace(0, 1, N_ODE_STEPS, device=device)
-    traj   = odeint(vf, x_init, t_span, method='euler') # 'euler' / 'heun'
-
-plot_comparison_zoom(
-    lr_batch, traj[-1], epoch=13,
-    high_r=hr_batch,        # set to None if you have no HR reference
-    zoom_box=None,          # None = auto-select highest-variance region per image
-    crop_frac=0.25,         # zoom crop = 25% of image size
-    zoom_scale=2,           # magnify the crop 2× for display
-    show=False, n_img=N_EVAL_IMGS,
-    save_prefix=f"{VARIANT}_final", output_dir=run_dir,
+CHECKPOINT = os.path.join(
+    os.path.dirname(__file__),
+    "../2026-06-05/16-41-56_cond_sr_div2k_x4/final_checkpoint.pt"
 )
 
-# %%
+torch.manual_seed(SEED)
+device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+print('device:', device)
 
+# ── Model ─────────────────────────────────────────────────────────────────────
+model = SuperResUNet(
+    in_channels           = IN_CHANNELS,
+    condition_on_lr       = True,
+    model_channels        = MODEL_CHANNELS,
+    out_channels          = IN_CHANNELS,
+    num_res_blocks        = NUM_RES_BLOCKS,
+    attention_resolutions = ATTENTION_RES,
+    dropout               = 0.0,
+    channel_mult          = CHANNEL_MULT,
+    conv_resample         = True,
+    num_heads             = 4,
+    num_heads_upsample    = -1,
+    use_scale_shift_norm  = True,
+    num_classes           = None,
+).to(device)
 
+state_dict = torch.load(CHECKPOINT, map_location=device)['final_model']
+model.load_state_dict(state_dict)
+model.eval()
+print(f"Loaded: {CHECKPOINT}")
 
+# ── Load images ───────────────────────────────────────────────────────────────
+def load_image(path):
+    """Load a PNG/JPG as a (3, H, W) tensor normalised to [-1, 1]."""
+    img = Image.open(path).convert('RGB')
+    t   = ToTensor()(img)          # [0, 1]
+    return (t - 0.5) / 0.5        # [-1, 1]
+
+paths = sorted(
+    glob.glob(os.path.join(IMAGE_DIR, "*.png")) +
+    glob.glob(os.path.join(IMAGE_DIR, "*.jpg")) +
+    glob.glob(os.path.join(IMAGE_DIR, "*.jpeg"))
+)
+if not paths:
+    raise FileNotFoundError(f"No images found in {IMAGE_DIR}")
+print(f"Found {len(paths)} image(s) in {IMAGE_DIR}")
+
+# ── Per-image inference ───────────────────────────────────────────────────────
+out_dir = os.path.dirname(__file__)
+
+for img_path in paths:
+    name     = os.path.splitext(os.path.basename(img_path))[0]
+    full_lr  = load_image(img_path).to(device)   # (3, H, W)
+    _, H, W  = full_lr.shape
+
+    # Guard: image must be large enough for the requested crop
+    if H < LR_CROP_SIZE or W < LR_CROP_SIZE:
+        print(f"  Skipping {name}: image ({H}×{W}) smaller than LR_CROP_SIZE={LR_CROP_SIZE}")
+        continue
+
+    # Select crop origin
+    if CROP_ORIGIN is None:
+        r0, c0 = _auto_zoom_box(full_lr, LR_CROP_SIZE)
+    else:
+        r0, c0 = CROP_ORIGIN
+
+    r0 = min(r0, H - LR_CROP_SIZE)
+    c0 = min(c0, W - LR_CROP_SIZE)
+    crop_box = (r0, c0, LR_CROP_SIZE, LR_CROP_SIZE)
+
+    # Extract LR crop and bicubic-upsample to model input size
+    lr_crop = full_lr[:, r0:r0 + LR_CROP_SIZE, c0:c0 + LR_CROP_SIZE]  # (3,ch,cw)
+    hr_size = LR_CROP_SIZE * SCALE_FACTOR
+    lr_up   = F.interpolate(
+        lr_crop.unsqueeze(0), size=(hr_size, hr_size),
+        mode='bicubic', align_corners=False,
+    )                                                                    # (1,3,hs,hs)
+
+    # Super-resolve the patch
+    with torch.no_grad():
+        x_init = lr_up + EPSILON * torch.randn_like(lr_up)
+        vf     = ConditionalVectorField(model, x0_cond=lr_up, y=None)
+        t_span = torch.linspace(0, 1, N_ODE_STEPS, device=device)
+        traj   = odeint(vf, x_init, t_span, method='euler')
+    sr_crop = traj[-1].squeeze(0).clamp(-1, 1)                         # (3,hs,hs)
+
+    # Plot
+    plot_sr_patch(
+        full_lr   = full_lr.cpu(),
+        lr_crop   = lr_crop.cpu(),
+        sr_crop   = sr_crop.cpu(),
+        crop_box_lr = crop_box,
+        scale_factor = SCALE_FACTOR,
+        box_color = 'red',
+        show      = False,
+        save_prefix = name,
+        output_dir  = out_dir,
+    )
+    print(f"  Saved: {out_dir}/{name}_sr_patch.png  (crop at r={r0}, c={c0})")

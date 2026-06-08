@@ -51,109 +51,87 @@ def plot_comparison(
     plt.close(fig)
 
 
-def _auto_zoom_box(img_tensor, crop_frac=0.25):
-    """Return (r0, c0, zh, zw) of the highest-variance crop in img_tensor."""
+def _auto_zoom_box(img_tensor, crop_size):
+    """Return (r0, c0) of the highest-variance crop of shape (crop_size, crop_size)."""
     img = unnormalize_img(img_tensor)   # (H, W, 3)
     H, W = img.shape[:2]
-    zh = max(32, int(H * crop_frac))
-    zw = max(32, int(W * crop_frac))
-    step = max(8, min(zh, zw) // 4)
+    ch = cw = crop_size
+    step = max(8, crop_size // 4)
     best_var, best_r, best_c = -1.0, 0, 0
-    for r in range(0, H - zh + 1, step):
-        for c in range(0, W - zw + 1, step):
-            v = img[r:r + zh, c:c + zw].var()
+    for r in range(0, H - ch + 1, step):
+        for c in range(0, W - cw + 1, step):
+            v = img[r:r + ch, c:c + cw].var()
             if v > best_var:
                 best_var, best_r, best_c = v, r, c
-    return best_r, best_c, zh, zw
+    return best_r, best_c
 
 
-def plot_comparison_zoom(
-    low_r, gen, epoch,
-    high_r=None,
-    zoom_box=None,          # (r0, c0, h, w) in pixels; None = auto per image
-    crop_frac=0.25,         # fraction of image used for zoom when zoom_box is None
+def plot_sr_patch(
+    full_lr,        # (3, H, W) tensor — full original LR image, [-1, 1]
+    lr_crop,        # (3, ch, cw) tensor — LR patch at native LR resolution
+    sr_crop,        # (3, ch*s, cw*s) tensor — SR model output
+    crop_box_lr,    # (r0, c0, ch, cw) location of crop inside full_lr
+    scale_factor=4,
     box_color='red',
-    zoom_scale=2,           # how much to magnify the zoom patch for display
-    show=False, n_img=4,
+    show=False,
     save_prefix="SuperRes", output_dir=".",
 ):
-    """Plot SR results with a zoomed inset crop for each image.
+    """Three-panel SR result plot (no HR reference needed).
 
-    Layout (per sample):
-        top row   — full image(s) with a coloured rectangle marking the crop
-        bottom row — zoomed crop, magnified by zoom_scale for easy comparison
+    Layout:
+        [Full original LR + rectangle]  |  [LR Crop]  |  [SR ×s]
 
     Args:
-        low_r:      LR batch  (B, C, H, W) in [-1, 1]
-        gen:        SR batch  (B, C, H, W) in [-1, 1]
-        high_r:     HR batch  (B, C, H, W) in [-1, 1], or None
-        zoom_box:   fixed (r0, c0, h, w) applied to every image;
-                    pass None to auto-select per image (highest variance region)
-        crop_frac:  size of auto crop as fraction of image dimensions
-        zoom_scale: integer upscale applied to the crop patch for display
+        full_lr:     full original LR image tensor (3, H, W)
+        lr_crop:     the LR patch at native resolution (3, ch, cw)
+        sr_crop:     the SR output (3, ch*s, cw*s)
+        crop_box_lr: (r0, c0, ch, cw) — crop location in full_lr coordinates
+        scale_factor: upscaling factor, used for the SR panel title
     """
-    batches = [low_r, gen] + ([high_r] if high_r is not None else [])
-    titles  = ['Low Res', 'Generated'] + (['High Res'] if high_r is not None else [])
-    n_cols  = len(batches)
-    n_img   = min(n_img, low_r.size(0))
+    r0, c0, ch, cw = crop_box_lr
 
-    # Each sample occupies 2 matplotlib rows (full + zoom)
-    fig, axes = plt.subplots(
-        n_img * 2, n_cols,
-        figsize=(n_cols * 2.8, n_img * 5.6),
-        gridspec_kw={'hspace': 0.06, 'wspace': 0.04},
+    full_img = unnormalize_img(full_lr)    # (H, W, 3)
+    lr_img   = unnormalize_img(lr_crop)    # (ch, cw, 3)
+    sr_img   = unnormalize_img(sr_crop)    # (ch*s, cw*s, 3)
+    H, W     = full_img.shape[:2]
+
+    # Width ratio: full image vs each crop panel
+    full_ratio = W / cw
+    fig_w      = (full_ratio + 2) * 3.0
+    fig_h      = (H / W) * full_ratio * 3.0
+
+    fig, (ax_full, ax_lr, ax_sr) = plt.subplots(
+        1, 3,
+        figsize=(fig_w, fig_h),
+        gridspec_kw={'width_ratios': [full_ratio, 1, 1], 'wspace': 0.05},
     )
-    # Normalise axes shape to (n_img*2, n_cols)
-    if n_img * 2 == 1 and n_cols == 1:
-        axes = np.array([[axes]])
-    elif n_img * 2 == 1:
-        axes = axes[np.newaxis, :]
-    elif n_cols == 1:
-        axes = axes[:, np.newaxis]
 
-    for img_idx in range(n_img):
-        full_row = img_idx * 2
-        zoom_row = img_idx * 2 + 1
+    # ── Full original image with rectangle ────────────────────────────────
+    ax_full.imshow(full_img, interpolation='nearest')
+    ax_full.add_patch(plt.Rectangle(
+        (c0, r0), cw, ch,
+        linewidth=max(1, int(W / 300)), edgecolor=box_color, facecolor='none',
+    ))
+    ax_full.axis('off')
+    ax_full.set_title('Original', fontsize=12, fontweight='bold', pad=5)
 
-        # Determine zoom box for this image (use LR as reference)
-        if zoom_box is None:
-            r0, c0, zh, zw = _auto_zoom_box(low_r[img_idx], crop_frac)
-        else:
-            r0, c0, zh, zw = zoom_box
+    # ── LR crop (raw pixels) ──────────────────────────────────────────────
+    ax_lr.imshow(lr_img, interpolation='nearest')
+    ax_lr.axis('off')
+    for spine in ax_lr.spines.values():
+        spine.set_edgecolor(box_color); spine.set_linewidth(2); spine.set_visible(True)
+    ax_lr.set_title('LR Crop', fontsize=12, fontweight='bold', pad=5)
 
-        for col_idx, (title, batch) in enumerate(zip(titles, batches)):
-            img = unnormalize_img(batch[img_idx])   # (H, W, 3)
+    # ── SR output ─────────────────────────────────────────────────────────
+    ax_sr.imshow(sr_img, interpolation='nearest')
+    ax_sr.axis('off')
+    for spine in ax_sr.spines.values():
+        spine.set_edgecolor(box_color); spine.set_linewidth(2); spine.set_visible(True)
+    ax_sr.set_title(f'SR ×{scale_factor}', fontsize=12, fontweight='bold', pad=5)
 
-            # ── Full image with rectangle ──────────────────────────────────
-            ax = axes[full_row, col_idx]
-            ax.imshow(img, interpolation='nearest')
-            rect = plt.Rectangle(
-                (c0, r0), zw, zh,
-                linewidth=2, edgecolor=box_color, facecolor='none',
-            )
-            ax.add_patch(rect)
-            ax.axis('off')
-            if img_idx == 0:
-                ax.set_title(title, fontsize=12, fontweight='bold', pad=5)
-
-            # ── Zoom patch ────────────────────────────────────────────────
-            ax_z = axes[zoom_row, col_idx]
-            crop = img[r0:r0 + zh, c0:c0 + zw]     # (zh, zw, 3)
-            # Nearest-neighbour upscale so pixel structure stays crisp
-            crop_big = np.repeat(np.repeat(crop, zoom_scale, axis=0),
-                                 zoom_scale, axis=1)
-            ax_z.imshow(crop_big, interpolation='nearest')
-            ax_z.axis('off')
-            # Thin border matching the rectangle colour
-            for spine in ax_z.spines.values():
-                spine.set_edgecolor(box_color)
-                spine.set_linewidth(1.5)
-                spine.set_visible(True)
-
-    fig.suptitle(f"{save_prefix} — epoch {epoch}", fontsize=13,
-                 fontweight='bold', y=1.005)
+    fig.suptitle(save_prefix, fontsize=13, fontweight='bold', y=1.02)
     fig.savefig(
-        os.path.join(output_dir, f"{save_prefix}_zoom_epoch_{str(epoch).zfill(3)}.png"),
+        os.path.join(output_dir, f"{save_prefix}_sr_patch.png"),
         bbox_inches='tight', dpi=200,
     )
     if show:
